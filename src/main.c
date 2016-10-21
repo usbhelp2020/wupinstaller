@@ -287,7 +287,7 @@ int Menu_Main(void)
 					OSScreenPutFontEx(i, 0, 2, text);
 					OSScreenPutFontEx(i, 0, 3, "You can eject the SD card now (if wanted).");
 				}
-				__os_snprintf(text, sizeof(text), "Select Install Folder # (0=install\): ", dirNum);
+				__os_snprintf(text, sizeof(text), "Select Install Folder # (0=install/): ", dirNum);
 				OSScreenPutFontEx(i, 0, 5, text);
 
 				OSScreenPutFontEx(i, 0, 6, "Press A-Button to install another title to system memory.");
