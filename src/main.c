@@ -254,9 +254,9 @@ int Menu_Main(void)
     {
         char folder[30];
 		if (dirNum > 0)
-			__os_snprintf(text, sizeof(text), "/vol/app_sd/install");
-		else
 			__os_snprintf(text, sizeof(text), "/vol/app_sd/install/", dirNum);
+		else
+			__os_snprintf(text, sizeof(text), "/vol/app_sd/install");
 		InstallTitle(folder);
 
         MEM1_free(screenBuffer);
