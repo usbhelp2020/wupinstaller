@@ -226,6 +226,7 @@ int Menu_Main(void)
     VPADInit();
 	
     int update_screen = 1;
+    int delay = 0;
     int doInstall = 0;
     int vpadError = -1;
     VPADData vpad;
