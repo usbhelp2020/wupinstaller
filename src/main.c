@@ -19,6 +19,7 @@ static int installSuccess = 0;
 static int installToUsb = 0;
 static u32 installError = 0;
 static u64 installedTitle = 0;
+static int dirNum = 0;
 
 static void PrintError(const char *errorStr)
 {
@@ -79,9 +80,11 @@ static void InstallTitle(const char *titlePath)
         u32 titleIdLow = mcpInstallInfo[1];
 
         if(   (titleIdHigh == 0x0005000E)     // game update
-           || (titleIdLow == 0x10041000)     // JAP title
-           || (titleIdLow == 0x10041100)     // USA title
-           || (titleIdLow == 0x10041200))    // EUR title
+           || (titleIdHigh == 0x00050000)     // game
+        //   || (titleIdHigh == 0x0005000C)     // DLC
+           || (titleIdLow == 0x10041000)     // JAP Version.bin
+           || (titleIdLow == 0x10041100)     // USA Version.bin
+           || (titleIdLow == 0x10041200))    // EUR Version.bin
         {
             installedTitle = ((u64)titleIdHigh << 32ULL) | titleIdLow;
 
@@ -221,6 +224,11 @@ int Menu_Main(void)
     memoryInitialize();
 
     VPADInit();
+	
+    int update_screen = 1;
+    int doInstall = 0;
+    int vpadError = -1;
+    VPADData vpad;
 
     // Prepare screen
     int screen_buf0_size = 0;
@@ -239,16 +247,17 @@ int Menu_Main(void)
     OSScreenEnableEx(0, 1);
     OSScreenEnableEx(1, 1);
 
-    // Clear screens
-    OSScreenClearBufferEx(0, 0);
-    OSScreenClearBufferEx(1, 0);
-
     // in case we are not in mii maker but in system menu we start the installation
     if (OSGetTitleID() != 0x000500101004A200 && // mii maker eur
         OSGetTitleID() != 0x000500101004A100 && // mii maker usa
         OSGetTitleID() != 0x000500101004A000)   // mii maker jpn
     {
-        InstallTitle("/vol/app_sd/install");
+        char folder[30];
+		if (dirNum > 0)
+			__os_snprintf(text, sizeof(text), "/vol/app_sd/install");
+		else
+			__os_snprintf(text, sizeof(text), "/vol/app_sd/install/", dirNum);
+		InstallTitle(folder);
 
         MEM1_free(screenBuffer);
         memoryRelease();
@@ -257,47 +266,39 @@ int Menu_Main(void)
         return EXIT_RELAUNCH_ON_LOAD;
     }
 
-    if(!installSuccess)
-    {
-        // print to TV and DRC
-        for(int i = 0; i < 2; i++)
-        {
-            OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
-            OSScreenPutFontEx(i, 0, 2, "Press A-Button to install title to system memory.");
-            OSScreenPutFontEx(i, 0, 3, "Press X-Button to install title to USB storage.");
-            OSScreenPutFontEx(i, 0, 4, "Press HOME-Button to return to HBL.");
-        }
-    }
-    else
-    {
-        // print to TV and DRC
-        for(int i = 0; i < 2; i++)
-        {
-            OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
-
-            char text[80];
-            __os_snprintf(text, sizeof(text), "Install of title %08X-%08X finished successfully.", (u32)(installedTitle >> 32), (u32)(installedTitle & 0xffffffff));
-
-            OSScreenPutFontEx(i, 0, 2, text);
-            OSScreenPutFontEx(i, 0, 3, "You can eject the SD card now (if wanted).");
-
-            OSScreenPutFontEx(i, 0, 5, "Press A-Button to install another title to system memory.");
-            OSScreenPutFontEx(i, 0, 6, "Press X-Button to install another title to USB storage.");
-            OSScreenPutFontEx(i, 0, 7, "Press HOME-Button to return to HBL.");
-        }
-    }
-
-    // Flip buffers
-    OSScreenFlipBuffersEx(0);
-    OSScreenFlipBuffersEx(1);
-
-    int doInstall = 0;
-    int vpadError = -1;
-    VPADData vpad;
-
     while(1)
     {
         VPADRead(0, &vpad, 1, &vpadError);
+
+		// print to TV and DRC
+		if(update_screen)
+		{
+			OSScreenClearBufferEx(0, 0);
+			OSScreenClearBufferEx(1, 0);
+			for(int i = 0; i < 2; i++)
+			{
+				char text[80];
+
+				OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
+				if(installSuccess)
+				{
+					__os_snprintf(text, sizeof(text), "Install of title %08X-%08X finished successfully.", (u32)(installedTitle >> 32), (u32)(installedTitle & 0xffffffff));
+
+					OSScreenPutFontEx(i, 0, 2, text);
+					OSScreenPutFontEx(i, 0, 3, "You can eject the SD card now (if wanted).");
+				}
+				__os_snprintf(text, sizeof(text), "Select Install Folder # (0=install\): ", dirNum);
+				OSScreenPutFontEx(i, 0, 5, text);
+
+				OSScreenPutFontEx(i, 0, 6, "Press A-Button to install another title to system memory.");
+				OSScreenPutFontEx(i, 0, 7, "Press X-Button to install another title to USB storage.");
+				OSScreenPutFontEx(i, 0, 8, "Press HOME-Button to return to HBL.");
+			}
+
+				// Flip buffers
+				OSScreenFlipBuffersEx(0);
+				OSScreenFlipBuffersEx(1);
+		}
 
         if(vpadError == 0 && ((vpad.btns_d | vpad.btns_h) & VPAD_BUTTON_A))
         {
@@ -316,7 +317,33 @@ int Menu_Main(void)
         if(vpadError == 0 && ((vpad.btns_d | vpad.btns_h) & VPAD_BUTTON_HOME))
             break;
 
-		usleep(50000);
+        // Up/Down Buttons
+        if (pressedBtns & VPAD_BUTTON_UP)
+        {
+            if(--delay <= 0) {
+				if (dirNum < 1000)
+					dirNum++;
+				else
+					dirNum = 0;
+                delay = (vpad_data.btns_d & VPAD_BUTTON_UP) ? 6 : 0;
+            }
+        }
+        else if (pressedBtns & VPAD_BUTTON_DOWN)
+        {
+            if(--delay <= 0) {
+				if (dirNum > 0)
+					dirNum--;
+                delay = (vpad_data.btns_d & VPAD_BUTTON_DOWN) ? 6 : 0;
+            }
+        }
+        else {
+            delay = 0;
+        }
+
+        // Button pressed ?
+        update_screen = (pressedBtns & (VPAD_BUTTON_UP | VPAD_BUTTON_DOWN)) ? 1 : 0;
+
+		usleep(20000);
     }
 
 	MEM1_free(screenBuffer);
