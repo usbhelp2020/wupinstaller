@@ -13,7 +13,7 @@
 #include <dirent.h>
 
 #define TITLE_TEXT                  "WUP installer by crediar (HBL version 1.0 by Dimok)"
-#define TITLE_TEXT2                 "[Mod 1.1 by Yardape8000]"
+#define TITLE_TEXT2                 "[Mod 1.1.1 by Yardape8000]"
 
 #define MCP_COMMAND_INSTALL_ASYNC   0x81
 #define MAX_INSTALL_PATH_LENGTH     0x27F
@@ -33,11 +33,13 @@ static void PrintError2(const char *errorStr, const char *errorStr2)
     {
         OSScreenClearBufferEx(i, 0);
         OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
-        OSScreenPutFontEx(i, 0, 2, errorStr);
-        OSScreenPutFontEx(i, 0, 3, errorStr2);
+        OSScreenPutFontEx(i, 0, 1, TITLE_TEXT2);
+        OSScreenPutFontEx(i, 0, 3, installFolder);
+        OSScreenPutFontEx(i, 0, 5, errorStr);
+        OSScreenPutFontEx(i, 0, 6, errorStr2);
         OSScreenFlipBuffersEx(i);
     }
-    sleep(4);
+    sleep(5);
 }
 
 static void PrintError(const char *errorStr)
@@ -160,15 +162,16 @@ static void InstallTitle(const char *titlePath)
 
                         OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
                         OSScreenPutFontEx(i, 0, 1, TITLE_TEXT2);
-                        OSScreenPutFontEx(i, 0, 3, "Installing title...");
+						OSScreenPutFontEx(i, 0, 3, "Installing title...");
+                        OSScreenPutFontEx(i, 0, 4, installFolder);
 
                         __os_snprintf(text, sizeof(text), "%08X%08X - %0.1f / %0.1f MB (%i%%)", titleIdHigh, titleIdLow, installedSize / (1024.0f * 1024.0f),
                                                                                                   totalSize / (1024.0f * 1024.0f), percent);
-                        OSScreenPutFontEx(i, 0, 4, text);
+                        OSScreenPutFontEx(i, 0, 5, text);
 
                         if(percent == 100)
                         {
-                            OSScreenPutFontEx(i, 0, 5, "Please wait...");
+                            OSScreenPutFontEx(i, 0, 6, "Please wait...");
                         }
                         // Flip buffers
                         OSScreenFlipBuffersEx(i);
@@ -188,10 +191,12 @@ static void InstallTitle(const char *titlePath)
                 else
 				{
                     __os_snprintf(text, sizeof(text), "Error: install error code 0x%08X", installError);
-					if (installError == 0xFFFBF446)
+					if (installError == 0xFFFBF446 || installError == 0xFFFBF43F)
 						__os_snprintf(text2, sizeof(text2), "%s", "Possible missing or bad title.tik file");
-					if (installError == 0xFFFBF441)
+					else if (installError == 0xFFFBF441)
 						__os_snprintf(text2, sizeof(text2), "%s", "Possible incorrect console for DLC title.tik file");
+					else if (installError == 0xFFFCFFE4 )
+						__os_snprintf(text2, sizeof(text2), "%s", "Possible not enough memory on target device");
                 }
                 PrintError2(text, text2);
                 break;
@@ -446,10 +451,7 @@ int Menu_Main(void)
 				doInstall = 1;
 				installToUsb = 0;
 				if (useFolderSelect())
-				{
-					dirNum = 0;
 					dirNum = getNextSelectedFolder();
-				}
 				break;
 			}
 
@@ -458,10 +460,7 @@ int Menu_Main(void)
 				doInstall = 1;
 				installToUsb = 1;
 				if (useFolderSelect())
-				{
-					dirNum = 0;
 					dirNum = getNextSelectedFolder();
-				}
 				break;
 			}
 
@@ -521,6 +520,7 @@ int Menu_Main(void)
 
 		usleep(20000);
     }
+	GetInstallDir(installFolder, sizeof(installFolder));
 
 	MEM1_free(screenBuffer);
 	screenBuffer = NULL;
