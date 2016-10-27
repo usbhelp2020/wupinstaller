@@ -13,7 +13,7 @@
 #include <dirent.h>
 
 #define TITLE_TEXT                  "WUP installer by crediar (HBL version 1.0 by Dimok)"
-#define TITLE_TEXT2                 "[Mod 1.1.1 by Yardape8000]"
+#define TITLE_TEXT2                 "[Mod 1.2 by Yardape8000]"
 
 #define MCP_COMMAND_INSTALL_ASYNC   0x81
 #define MAX_INSTALL_PATH_LENGTH     0x27F
@@ -92,37 +92,38 @@ static void InstallTitle(const char *titlePath)
 
         u32 titleIdHigh = mcpInstallInfo[0];
         u32 titleIdLow = mcpInstallInfo[1];
-		int installableToUsb = 0;
+		int spoofFiles = 0;
+        if ((titleIdHigh == 00050010)
+			&&    ((titleIdLow == 0x10041000)     // JAP Version.bin
+				|| (titleIdLow == 0x10041100)     // USA Version.bin
+				|| (titleIdLow == 0x10041200)))    // EUR Version.bin
+		{
+			spoofFiles = 1;
+			installToUsb = 0;
+		}
 
-        if(   (titleIdHigh == 0x0005000E)     // game update
+        if (spoofFiles
+		   || (titleIdHigh == 0x0005000E)     // game update
            || (titleIdHigh == 0x00050000)     // game
            || (titleIdHigh == 0x0005000C)     // DLC
            || (titleIdHigh == 0x00050002))    // Demo
-		   installableToUsb = 1;
-        if( installableToUsb
-		   || (titleIdLow == 0x10041000)     // JAP Version.bin
-           || (titleIdLow == 0x10041100)     // USA Version.bin
-           || (titleIdLow == 0x10041200))    // EUR Version.bin
         {
             installedTitle = ((u64)titleIdHigh << 32ULL) | titleIdLow;
 
-            if(installToUsb && installableToUsb)
-            {
-                result = MCP_InstallSetTargetDevice(mcpHandle, 1);
-                if(result != 0)
-                {
-                    __os_snprintf(text, sizeof(text), "Error: MCP_InstallSetTargetDevice 0x%08X", MCP_GetLastRawError());
-                    PrintError(text);
-                    break;
-                }
-                result = MCP_InstallSetTargetUsb(mcpHandle, 1);
-                if(result != 0)
-                {
-                    __os_snprintf(text, sizeof(text), "Error: MCP_InstallSetTargetUsb 0x%08X", MCP_GetLastRawError());
-                    PrintError(text);
-                    break;
-                }
-            }
+			result = MCP_InstallSetTargetDevice(mcpHandle, installToUsb);
+			if(result != 0)
+			{
+				__os_snprintf(text, sizeof(text), "Error: MCP_InstallSetTargetDevice 0x%08X", MCP_GetLastRawError());
+				PrintError(text);
+				break;
+			}
+			result = MCP_InstallSetTargetUsb(mcpHandle, installToUsb);
+			if(result != 0)
+			{
+				__os_snprintf(text, sizeof(text), "Error: MCP_InstallSetTargetUsb 0x%08X", MCP_GetLastRawError());
+				PrintError(text);
+				break;
+			}
 
             mcpInstallInfo[2] = (unsigned int)MCP_COMMAND_INSTALL_ASYNC;
             mcpInstallInfo[3] = (unsigned int)mcpPathInfoVector;
@@ -195,8 +196,12 @@ static void InstallTitle(const char *titlePath)
 						__os_snprintf(text2, sizeof(text2), "%s", "Possible missing or bad title.tik file");
 					else if (installError == 0xFFFBF441)
 						__os_snprintf(text2, sizeof(text2), "%s", "Possible incorrect console for DLC title.tik file");
-					else if (installError == 0xFFFCFFE4 )
+					else if (installError == 0xFFFCFFE4)
 						__os_snprintf(text2, sizeof(text2), "%s", "Possible not enough memory on target device");
+					else if (installError == 0xFFFFF825)
+						__os_snprintf(text2, sizeof(text2), "%s", "Possible bad SD card.  Reformat (32k blocks) or replace");
+					else if ((installError && 0xFFFF0000) == 0xFFFB0000)
+						__os_snprintf(text2, sizeof(text2), "%s", "Verify title.tik and WUP files are correct & complete");
                 }
                 PrintError2(text, text2);
                 break;
@@ -208,8 +213,10 @@ static void InstallTitle(const char *titlePath)
                     OSScreenClearBufferEx(i, 0);
 
                     OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
+                    OSScreenPutFontEx(i, 0, 1, TITLE_TEXT2);
                     __os_snprintf(text, sizeof(text), "Installed title %08X-%08X successfully.", mcpInstallInfo[1], mcpInstallInfo[2]);
-                    OSScreenPutFontEx(i, 0, 2, text);
+                    OSScreenPutFontEx(i, 0, 3, text);
+                    OSScreenPutFontEx(i, 0, 4, titlePath);
                     // Flip buffers
                     OSScreenFlipBuffersEx(i);
                 }
@@ -345,6 +352,7 @@ int Menu_Main(void)
     int doInstall = 0;
     int vpadError = -1;
     VPADData vpad_data;
+	char lastFolder[256];
 
     // Prepare screen
     int screen_buf0_size = 0;
@@ -380,6 +388,12 @@ int Menu_Main(void)
     }
 
 	folderSelect[dirNum] = false;
+	
+	if (installSuccess)
+		__os_snprintf(lastFolder, sizeof(lastFolder), "%s", installFolder);
+	else
+		lastFolder[0]=0;
+	
 	if (installSuccess && useFolderSelect())
 	{
 		dirNum = getNextSelectedFolder();
@@ -387,7 +401,7 @@ int Menu_Main(void)
 		delay = 250;
 	}
 	
-    while(1)
+	while(1)
     {
 		// print to TV and DRC
 		if(update_screen)
@@ -406,18 +420,21 @@ int Menu_Main(void)
 					__os_snprintf(text, sizeof(text), "Install of title %08X-%08X finished successfully.", (u32)(installedTitle >> 32), (u32)(installedTitle & 0xffffffff));
 
 					OSScreenPutFontEx(i, 0, 3, text);
-					if (!doInstall)
-						OSScreenPutFontEx(i, 0, 4, "You can eject the SD card now (if wanted).");
+					OSScreenPutFontEx(i, 0, 4, lastFolder);
 				}
 
 				if (!doInstall)
 				{
-					OSScreenPutFontEx(i, 0, 6, "Select Install Folder:");
+					OSScreenPutFontEx(i, 0, 6, "Select Install Folder: (* = Selected)");
 					__os_snprintf(text, sizeof(text), "%c  %s", folderSelect[dirNum] ? '*' : ' ', installFolder);
 					OSScreenPutFontEx(i, 0, 7, text);
 
-					OSScreenPutFontEx(i, 0, 9, "Press A-Button to install title(s) to system memory.");
-					OSScreenPutFontEx(i, 0, 10, "Press X-Button to install title(s) to USB storage.");
+					OSScreenPutFontEx(i, 0, 9, "Press D-Pad U/D to change folder.");
+					OSScreenPutFontEx(i, 0, 10, "Press D-Pad L/R to (*)select/unselect folder.");
+					OSScreenPutFontEx(i, 0, 11, "Press + to select all folders, - to unselect all folders.");
+					OSScreenPutFontEx(i, 0, 12, "Press A-Button to install title(s) to system memory.");
+					OSScreenPutFontEx(i, 0, 13, "Press X-Button to install title(s) to USB storage.");
+					OSScreenPutFontEx(i, 0, 14, "Press Y-Button to remount the SD and rescan folders.");
 				}
 				else
 				{
@@ -427,7 +444,7 @@ int Menu_Main(void)
 					OSScreenPutFontEx(i, 0, 7, "Press B-Button to Cancel");
 				}
 
-				OSScreenPutFontEx(i, 0, 11, "Press HOME-Button to return to HBL.");
+				OSScreenPutFontEx(i, 0, 16, "Press HOME-Button to return to HBL.");
 			}
 
 				// Flip buffers
@@ -438,6 +455,8 @@ int Menu_Main(void)
 
         VPADRead(0, &vpad_data, 1, &vpadError);
 		u32 pressedBtns = 0;
+		int yPressed = 0;
+
 		if (!vpadError)
 			pressedBtns = vpad_data.btns_d | vpad_data.btns_h;
 		
@@ -463,6 +482,21 @@ int Menu_Main(void)
 					dirNum = getNextSelectedFolder();
 				break;
 			}
+
+			if (pressedBtns & VPAD_BUTTON_Y)
+			{
+				if (!yPressed)
+				{
+					unmount_sd_fat("sd");
+					mount_sd_fat("sd");
+					setAllFolderSelect(false);
+					dirNum = 0;
+					update_screen = 1;
+				}
+				yPressed = 1;
+			}
+			else
+				yPressed = 0;
 
 			// Up/Down Buttons
 			if (pressedBtns & VPAD_BUTTON_UP)
@@ -501,7 +535,8 @@ int Menu_Main(void)
 			}
 
 			// folder selection button pressed ?
-			update_screen = (pressedBtns & (VPAD_BUTTON_UP | VPAD_BUTTON_DOWN | VPAD_BUTTON_LEFT | VPAD_BUTTON_RIGHT | VPAD_BUTTON_PLUS | VPAD_BUTTON_MINUS)) ? 1 : 0;
+			update_screen = ((pressedBtns & (VPAD_BUTTON_UP | VPAD_BUTTON_DOWN | VPAD_BUTTON_LEFT | VPAD_BUTTON_RIGHT
+											| VPAD_BUTTON_PLUS | VPAD_BUTTON_MINUS)) || yPressed) ? 1 : 0;
 		}
 		else
 		{
