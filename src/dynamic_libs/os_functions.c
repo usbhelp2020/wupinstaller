@@ -60,7 +60,7 @@ EXPORT_DECL(int, OSTryLockMutex, void* mutex);
 EXPORT_DECL(u64, OSGetTitleID, void);
 EXPORT_DECL(int, OSGetPFID, void);
 EXPORT_DECL(void, OSShutdown, void);
-EXPORT_DECL(void, __Exit, void);
+EXPORT_DECL(void, __Exit, int);
 EXPORT_DECL(void, OSFatal, const char* msg);
 EXPORT_DECL(void, OSSetExceptionCallback, u8 exceptionType, exception_callback newCallback);
 EXPORT_DECL(void, DCFlushRange, const void *addr, u32 length);

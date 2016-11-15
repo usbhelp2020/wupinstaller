@@ -101,7 +101,7 @@ extern int (* OSTryLockMutex)(void* mutex);
 extern u64 (* OSGetTitleID)(void);
 extern int (* OSGetPFID)(void);
 extern void (* OSShutdown)(void);
-extern void (* __Exit)(void);
+extern void (* __Exit)(int);
 extern void (* OSFatal)(const char* msg);
 extern void (* DCFlushRange)(const void *addr, u32 length);
 extern void (* DCInvalidateRange)(const void *addr, u32 length);

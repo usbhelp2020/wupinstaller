@@ -19,6 +19,7 @@ static int installSuccess = 0;
 static int installToUsb = 0;
 static u32 installError = 0;
 static u64 installedTitle = 0;
+static u64 baseTitleId = 0;
 
 static void PrintError(const char *errorStr)
 {
@@ -39,7 +40,7 @@ static int IosInstallCallback(unsigned int errorCode, unsigned int * priv_data)
     return 0;
 }
 
-static void InstallTitle(const char *titlePath)
+static void InstallTitle(const char *titlePath, int ignoreWhitelist)
 {
     //!---------------------------------------------------
     //! This part of code originates from Crediars MCP patcher assembly code
@@ -78,14 +79,15 @@ static void InstallTitle(const char *titlePath)
         u32 titleIdHigh = mcpInstallInfo[0];
         u32 titleIdLow = mcpInstallInfo[1];
 
-        if(   (titleIdHigh == 0x0005000E)     // game update
+        if(   (titleIdHigh == 0x0005000E)    // game update
            || (titleIdLow == 0x10041000)     // JAP title
            || (titleIdLow == 0x10041100)     // USA title
-           || (titleIdLow == 0x10041200))    // EUR title
+           || (titleIdLow == 0x10041200)     // EUR title
+           || ignoreWhitelist)
         {
             installedTitle = ((u64)titleIdHigh << 32ULL) | titleIdLow;
 
-            if(installToUsb && (titleIdHigh == 0x0005000E))
+            if(installToUsb && (ignoreWhitelist || (titleIdHigh == 0x0005000E)))
             {
                 result = MCP_InstallSetTargetDevice(mcpHandle, 1);
                 if(result != 0)
@@ -200,6 +202,46 @@ static void InstallTitle(const char *titlePath)
         OSFreeToSystem(mcpInstallInfo);
 }
 
+static void CheckAndPrintInstallResult(void)
+{
+    OSScreenClearBufferEx(0, 0);
+    OSScreenClearBufferEx(1, 0);
+
+    if(!installSuccess)
+    {
+        // print to TV and DRC
+        for(int i = 0; i < 2; i++)
+        {
+            OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
+            OSScreenPutFontEx(i, 0, 2, "Press A-Button to install title to system memory.");
+            OSScreenPutFontEx(i, 0, 3, "Press X-Button to install title to USB storage.");
+            OSScreenPutFontEx(i, 0, 4, "Press HOME-Button to return to HBL.");
+        }
+    }
+    else
+    {
+        // print to TV and DRC
+        for(int i = 0; i < 2; i++)
+        {
+            OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
+
+            char text[80];
+            __os_snprintf(text, sizeof(text), "Install of title %08X-%08X finished successfully.", (u32)(installedTitle >> 32), (u32)(installedTitle & 0xffffffff));
+
+            OSScreenPutFontEx(i, 0, 2, text);
+            OSScreenPutFontEx(i, 0, 3, "You can eject the SD card now (if wanted).");
+
+            OSScreenPutFontEx(i, 0, 5, "Press A-Button to install another title to system memory.");
+            OSScreenPutFontEx(i, 0, 6, "Press X-Button to install another title to USB storage.");
+            OSScreenPutFontEx(i, 0, 7, "Press HOME-Button to return to HBL.");
+        }
+    }
+
+    // Flip buffers
+    OSScreenFlipBuffersEx(0);
+    OSScreenFlipBuffersEx(1);
+}
+
 /* Entry point */
 int Menu_Main(void)
 {
@@ -243,53 +285,26 @@ int Menu_Main(void)
     OSScreenClearBufferEx(0, 0);
     OSScreenClearBufferEx(1, 0);
 
+    u64 currenTitleId = OSGetTitleID();
+    int hblChannelLaunch = (currenTitleId == 0x0005000013374842);
+
     // in case we are not in mii maker but in system menu we start the installation
-    if (OSGetTitleID() != 0x000500101004A200 && // mii maker eur
-        OSGetTitleID() != 0x000500101004A100 && // mii maker usa
-        OSGetTitleID() != 0x000500101004A000)   // mii maker jpn
+    if (currenTitleId != 0x000500101004A200 && // mii maker eur
+        currenTitleId != 0x000500101004A100 && // mii maker usa
+        currenTitleId != 0x000500101004A000 && // mii maker jpn
+        !hblChannelLaunch)                     // HBL channel
     {
-        InstallTitle("/vol/app_sd/install");
+        InstallTitle("/vol/app_sd/install", 0);
 
         MEM1_free(screenBuffer);
         memoryRelease();
-        SYSLaunchMiiStudio(0);
+        SYSLaunchTitle(baseTitleId);
 
         return EXIT_RELAUNCH_ON_LOAD;
     }
 
-    if(!installSuccess)
-    {
-        // print to TV and DRC
-        for(int i = 0; i < 2; i++)
-        {
-            OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
-            OSScreenPutFontEx(i, 0, 2, "Press A-Button to install title to system memory.");
-            OSScreenPutFontEx(i, 0, 3, "Press X-Button to install title to USB storage.");
-            OSScreenPutFontEx(i, 0, 4, "Press HOME-Button to return to HBL.");
-        }
-    }
-    else
-    {
-        // print to TV and DRC
-        for(int i = 0; i < 2; i++)
-        {
-            OSScreenPutFontEx(i, 0, 0, TITLE_TEXT);
-
-            char text[80];
-            __os_snprintf(text, sizeof(text), "Install of title %08X-%08X finished successfully.", (u32)(installedTitle >> 32), (u32)(installedTitle & 0xffffffff));
-
-            OSScreenPutFontEx(i, 0, 2, text);
-            OSScreenPutFontEx(i, 0, 3, "You can eject the SD card now (if wanted).");
-
-            OSScreenPutFontEx(i, 0, 5, "Press A-Button to install another title to system memory.");
-            OSScreenPutFontEx(i, 0, 6, "Press X-Button to install another title to USB storage.");
-            OSScreenPutFontEx(i, 0, 7, "Press HOME-Button to return to HBL.");
-        }
-    }
-
-    // Flip buffers
-    OSScreenFlipBuffersEx(0);
-    OSScreenFlipBuffersEx(1);
+    // print result
+    CheckAndPrintInstallResult();
 
     int doInstall = 0;
     int vpadError = -1;
@@ -301,16 +316,48 @@ int Menu_Main(void)
 
         if(vpadError == 0 && ((vpad.btns_d | vpad.btns_h) & VPAD_BUTTON_A))
         {
-            doInstall = 1;
+            baseTitleId = currenTitleId;
             installToUsb = 0;
-            break;
+            installSuccess = 0;
+            installedTitle = 0;
+            installCompleted = 0;
+            installError = 0;
+
+            //! HBL channel has all the rights to install a title. No need to launch menu.
+            //! since it is always on redNAND or other CFW the white list can be ignored
+            if(hblChannelLaunch)
+            {
+                InstallTitle("/vol/app_sd/install", 1);
+                CheckAndPrintInstallResult();
+            }
+            else
+            {
+                doInstall = 1;
+                break;
+            }
         }
 
         if(vpadError == 0 && ((vpad.btns_d | vpad.btns_h) & VPAD_BUTTON_X))
         {
-            doInstall = 1;
+            baseTitleId = currenTitleId;
             installToUsb = 1;
-            break;
+            installSuccess = 0;
+            installedTitle = 0;
+            installCompleted = 0;
+            installError = 0;
+
+            //! HBL channel has all the rights to install a title. No need to launch menu.
+            //! since it is always on redNAND or other CFW the white list can be ignored
+            if(hblChannelLaunch)
+            {
+                InstallTitle("/vol/app_sd/install", 1);
+                CheckAndPrintInstallResult();
+            }
+            else
+            {
+                doInstall = 1;
+                break;
+            }
         }
 
         if(vpadError == 0 && ((vpad.btns_d | vpad.btns_h) & VPAD_BUTTON_HOME))
@@ -329,11 +376,6 @@ int Menu_Main(void)
 
     if(doInstall)
     {
-        installSuccess = 0;
-        installedTitle = 0;
-        installCompleted = 0;
-        installError = 0;
-
         SYSLaunchMenu();
         return EXIT_RELAUNCH_ON_LOAD;
     }
