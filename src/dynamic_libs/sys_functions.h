@@ -34,7 +34,7 @@ extern void(*_SYSLaunchTitleByPathFromLauncher)(const char* path, int len, int z
 extern int (* SYSRelaunchTitle)(int argc, char* argv);
 extern int (* SYSLaunchMenu)(void);
 extern int (* SYSLaunchMiiStudio)(void *arg);
-
+extern int (* SYSLaunchTitle)(u64 titleId);
 
 #ifdef __cplusplus
 }

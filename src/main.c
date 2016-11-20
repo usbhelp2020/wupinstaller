@@ -4,27 +4,32 @@
 #include "dynamic_libs/fs_functions.h"
 #include "dynamic_libs/sys_functions.h"
 #include "dynamic_libs/vpad_functions.h"
-#include "dynamic_libs/socket_functions.h"
 #include "system/memory.h"
-#include "utils/logger.h"
+//#include "dynamic_libs/socket_functions.h"
+//#include "utils/logger.h"
 #include "utils/utils.h"
 #include "common/common.h"
 #include "fs/sd_fat_devoptab.h"
 #include <dirent.h>
 
 #define TITLE_TEXT                  "WUP installer by crediar (HBL version 1.0 by Dimok)"
-#define TITLE_TEXT2                 "[Mod 1.2.1 by Yardape8000]"
+#define TITLE_TEXT2                 "[Mod 1.3 by Yardape8000]"
+
+#define HBL_TITLE_ID	0x0005000013374842
 
 #define MCP_COMMAND_INSTALL_ASYNC   0x81
 #define MAX_INSTALL_PATH_LENGTH     0x27F
 
+static int doInstall = 0;
 static int installCompleted = 0;
 static int installSuccess = 0;
 static int installToUsb = 0;
 static u32 installError = 0;
 static u64 installedTitle = 0;
+static u64 baseTitleId = 0;
 static int dirNum = 0;
 static char installFolder[256] = "";
+static char lastFolder[256] = "";
 static char errorText1[128] = "";
 static char errorText2[128] = "";
 static bool folderSelect[1024] = {false};
@@ -36,11 +41,105 @@ static int IosInstallCallback(unsigned int errorCode, unsigned int * priv_data)
     return 0;
 }
 
-static void InstallTitle(const char *titlePath)
+static void GetInstallDir(char *dest, int size)
 {
-    errorText1[0]=0;
-    errorText2[0]=0;
-    installCompleted = 1;
+	DIR *dirPtr;
+	struct dirent *dirEntry;     
+	dirPtr = opendir ("sd:/install/");
+	int dirsFound = 0;
+	
+	if (dirPtr != NULL)
+	{
+		dirEntry = readdir(dirPtr);
+		if (dirEntry != NULL && dirEntry->d_type == DT_DIR)
+		{
+			seekdir(dirPtr, dirNum);
+			dirEntry = readdir(dirPtr);
+			closedir (dirPtr);
+			if (dirEntry != NULL && dirEntry->d_type == DT_DIR)
+				__os_snprintf(dest, size, "install/%s", dirEntry->d_name);
+			else
+			{
+				dirNum--;
+				if (dirNum < 0)
+					dirNum = 0;
+			}
+			dirsFound = 1;
+		}
+	}
+	if (!dirsFound)
+	{
+		__os_snprintf(dest, size, "install");
+		dirNum = 0;
+	}
+}
+
+static void setAllFolderSelect(bool state)
+{
+	DIR *dirPtr;
+	struct dirent *dirEntry;     
+	
+	for (int i = 0; i < 1023; i++)
+		folderSelect[i] = false;
+
+	if (state)
+	{
+		dirPtr = opendir ("sd:/install/");
+		if (dirPtr != NULL)
+		{
+			int i = 0;
+			while (1)
+			{
+				dirEntry = readdir(dirPtr);
+				if (dirEntry == NULL || dirEntry->d_type != DT_DIR)
+					break;
+				folderSelect[i++] = true;
+			}
+			closedir (dirPtr);
+		}
+	}
+}
+
+static int getNextSelectedFolder(void)
+{
+	int i;
+	for (i = 0; i < 1023; i++)
+		if (folderSelect[i] == true)
+			break;
+	return (i < 1023) ? i : 0;
+}
+
+static int useFolderSelect(void)
+{
+	int i;
+	int ret = 0;
+	for (i = 0; i < 1023; i++)
+		if (folderSelect[i] == true)
+		{
+			ret = 1;
+			break;
+		}
+	return ret;
+}
+
+static void SetupInstallTitle(void)
+{
+	if (useFolderSelect())
+		dirNum = getNextSelectedFolder();
+	GetInstallDir(installFolder, sizeof(installFolder));
+}
+
+static void InstallTitle(void)
+{
+    errorText1[0] = 0;
+    errorText2[0] = 0;
+	installSuccess = 0;
+	installedTitle = 0;
+	installCompleted = 1;
+	installError = 0;
+
+	__os_snprintf(lastFolder, sizeof(lastFolder), installFolder);
+
 	//!---------------------------------------------------
     //! This part of code originates from Crediars MCP patcher assembly code
     //! it is just translated to C
@@ -65,7 +164,7 @@ static void InstallTitle(const char *titlePath)
             break;
         }
 
-        __os_snprintf(text, sizeof(text), titlePath);
+		__os_snprintf(text, sizeof(text), "/vol/app_sd/%s", installFolder);
 
         int result = MCP_InstallGetInfo(mcpHandle, text, mcpInstallInfo);
         if(result != 0)
@@ -118,7 +217,7 @@ static void InstallTitle(const char *titlePath)
             mcpInstallInfo[5] = (unsigned int)0;
 
             memset(mcpInstallPath, 0, MAX_INSTALL_PATH_LENGTH);
-            __os_snprintf(mcpInstallPath, MAX_INSTALL_PATH_LENGTH, titlePath);
+            __os_snprintf(mcpInstallPath, MAX_INSTALL_PATH_LENGTH, text);
             memset(mcpPathInfoVector, 0, 0x0C);
 
             mcpPathInfoVector[0] = (unsigned int)mcpInstallPath;
@@ -187,9 +286,8 @@ static void InstallTitle(const char *titlePath)
 					else if (installError == 0xFFFFF825)
 						__os_snprintf(errorText2, sizeof(errorText2), "Possible bad SD card.  Reformat (32k blocks) or replace");
 					else if ((installError & 0xFFFF0000) == 0xFFFB0000)
-						__os_snprintf(errorText2, sizeof(errorText2), "Verify title.tik and WUP files are correct & complete");
+						__os_snprintf(errorText2, sizeof(errorText2), "Verify WUP files are correct & complete. DLC/E-shop require Sig Patch");
                 }
-                break;
             }
             else
             {
@@ -203,95 +301,22 @@ static void InstallTitle(const char *titlePath)
     }
     while(0);
 
-    MCP_Close(mcpHandle);
+	folderSelect[dirNum] = false;
+	if (installSuccess && useFolderSelect())
+	{
+		dirNum = getNextSelectedFolder();
+		doInstall = 1;
+	}
+	else
+		doInstall = 0;
 
+	MCP_Close(mcpHandle);
     if(mcpPathInfoVector)
         OSFreeToSystem(mcpPathInfoVector);
     if(mcpInstallPath)
         OSFreeToSystem(mcpInstallPath);
     if(mcpInstallInfo)
         OSFreeToSystem(mcpInstallInfo);
-}
-
-static void GetInstallDir(char *dest, int size)
-{
-	DIR *dirPtr;
-	struct dirent *dirEntry;     
-	dirPtr = opendir ("sd:/install/");
-	int dirsFound = 0;
-	
-	if (dirPtr != NULL)
-	{
-		dirEntry = readdir(dirPtr);
-		if (dirEntry != NULL && dirEntry->d_type == DT_DIR)
-		{
-			seekdir(dirPtr, dirNum);
-			dirEntry = readdir(dirPtr);
-			closedir (dirPtr);
-			if (dirEntry != NULL && dirEntry->d_type == DT_DIR)
-				__os_snprintf(dest, size, "install/%s", dirEntry->d_name);
-			else
-			{
-				dirNum--;
-				if (dirNum < 0)
-					dirNum = 0;
-			}
-			dirsFound = 1;
-		}
-	}
-	if (!dirsFound)
-	{
-		__os_snprintf(dest, size, "install");
-		dirNum = 0;
-	}
-}
-
-static void setAllFolderSelect(bool state)
-{
-	DIR *dirPtr;
-	struct dirent *dirEntry;     
-	
-	for (int i = 0; i < 1023; i++)
-		folderSelect[i] = false;
-
-	if (state)
-	{
-		dirPtr = opendir ("sd:/install/");
-		if (dirPtr != NULL)
-		{
-			int i = 0;
-			while (1)
-			{
-				dirEntry = readdir(dirPtr);
-				if (dirEntry == NULL || dirEntry->d_type != DT_DIR)
-					break;
-				folderSelect[i++] = true;
-			}
-			closedir (dirPtr);
-		}
-	}
-}
-
-static int getNextSelectedFolder(void)
-{
-	int i;
-	for (i = 0; i < 1023; i++)
-		if (folderSelect[i] == true)
-			break;
-	return i;
-}
-
-static int useFolderSelect(void)
-{
-	int i;
-	int ret = 0;
-	for (i = 0; i < 1023; i++)
-		if (folderSelect[i] == true)
-		{
-			ret = 1;
-			break;
-		}
-	return ret;
 }
 
 /* Entry point */
@@ -306,8 +331,7 @@ int Menu_Main(void)
     InitSysFunctionPointers();
     InitVPadFunctionPointers();
     //InitSocketFunctionPointers();
-
-    //log_init("192.168.178.3");
+	//log_init("192.168.0.100");
 
     //!*******************************************************************
     //!                    Initialize heap memory                        *
@@ -320,10 +344,8 @@ int Menu_Main(void)
 	
     int update_screen = 1;
 	int delay = 0;
-    int doInstall = 0;
     int vpadError = -1;
     VPADData vpad_data;
-	char lastFolder[256];
 
     // Prepare screen
     int screen_buf0_size = 0;
@@ -342,32 +364,30 @@ int Menu_Main(void)
     OSScreenEnableEx(0, 1);
     OSScreenEnableEx(1, 1);
 
-    // in case we are not in mii maker but in system menu we start the installation
-    if (OSGetTitleID() != 0x000500101004A200 && // mii maker eur
-        OSGetTitleID() != 0x000500101004A100 && // mii maker usa
-        OSGetTitleID() != 0x000500101004A000)   // mii maker jpn
-    {
-		char folder[256];
-		__os_snprintf(folder, sizeof(folder), "/vol/app_sd/%s", installFolder);
-		InstallTitle(folder);
+    u64 currenTitleId = OSGetTitleID();
+    int hblChannelLaunch = (currenTitleId == HBL_TITLE_ID);
 
+    // in case we are not in mii maker but in system menu we start the installation
+    if (currenTitleId != 0x000500101004A200 && // mii maker eur
+        currenTitleId != 0x000500101004A100 && // mii maker usa
+        currenTitleId != 0x000500101004A000 && // mii maker jpn
+        !hblChannelLaunch)                     // HBL channel
+    {
+		InstallTitle();
         MEM1_free(screenBuffer);
         memoryRelease();
-        SYSLaunchMiiStudio(0);
+        SYSLaunchTitle(baseTitleId);
 
         return EXIT_RELAUNCH_ON_LOAD;
     }
-
-	folderSelect[dirNum] = false;
 	
-	__os_snprintf(lastFolder, sizeof(lastFolder), installFolder);
-	
-	if (installSuccess && useFolderSelect())
+	if (doInstall)
 	{
-		dirNum = getNextSelectedFolder();
-		doInstall = 1;
+		SetupInstallTitle();
 		delay = 250;
 	}
+	
+	baseTitleId = currenTitleId;
 	
 	while(1)
     {
@@ -434,47 +454,51 @@ int Menu_Main(void)
 
 		if (!vpadError)
 			pressedBtns = vpad_data.btns_d | vpad_data.btns_h;
-		
+			
 		if (pressedBtns & VPAD_BUTTON_HOME)
+		{
+			doInstall = 0;
 			break;
+		}
+
+		if (!(pressedBtns & VPAD_BUTTON_Y))
+			yPressed = 0;
 
         if (!doInstall)
         {
-			if (pressedBtns & VPAD_BUTTON_A)
+			if (!(pressedBtns & (VPAD_BUTTON_UP | VPAD_BUTTON_DOWN)))
+				delay = 0;
+
+			if (pressedBtns & (VPAD_BUTTON_A | VPAD_BUTTON_X))	// install to NAND/USB
 			{
 				doInstall = 1;
-				installToUsb = 0;
-				if (useFolderSelect())
-					dirNum = getNextSelectedFolder();
-				break;
+				installToUsb = (pressedBtns & VPAD_BUTTON_X) ? 1: 0;
+				SetupInstallTitle();
+				if (hblChannelLaunch)
+				{
+					InstallTitle();
+					update_screen = 1;
+					if (doInstall)
+						delay = 250;
+				}
+				else					
+					break;
 			}
-
-			if (pressedBtns & VPAD_BUTTON_X)
-			{
-				doInstall = 1;
-				installToUsb = 1;
-				if (useFolderSelect())
-					dirNum = getNextSelectedFolder();
-				break;
-			}
-
-			if (pressedBtns & VPAD_BUTTON_Y)
+			else if (pressedBtns & VPAD_BUTTON_Y)		// remount SD
 			{
 				if (!yPressed)
 				{
 					unmount_sd_fat("sd");
+					usleep(50000);
 					mount_sd_fat("sd");
 					setAllFolderSelect(false);
 					dirNum = 0;
 					update_screen = 1;
+					usleep(50000);
 				}
 				yPressed = 1;
 			}
-			else
-				yPressed = 0;
-
-			// Up/Down Buttons
-			if (pressedBtns & VPAD_BUTTON_UP)
+			else if (pressedBtns & VPAD_BUTTON_UP)		// up directory
 			{
 				if (--delay <= 0)
 				{
@@ -485,7 +509,7 @@ int Menu_Main(void)
 					delay = (vpad_data.btns_d & VPAD_BUTTON_UP) ? 6 : 0;
 				}
 			}
-			else if (pressedBtns & VPAD_BUTTON_DOWN)
+			else if (pressedBtns & VPAD_BUTTON_DOWN)	// down directory
 			{
 				if (--delay <= 0)
 				{
@@ -494,28 +518,22 @@ int Menu_Main(void)
 					delay = (vpad_data.btns_d & VPAD_BUTTON_DOWN) ? 6 : 0;
 				}
 			}
-			else
-			{
-				delay = 0;
-			}
-			
-			if (pressedBtns & (VPAD_BUTTON_LEFT | VPAD_BUTTON_RIGHT))
+			else if (pressedBtns & (VPAD_BUTTON_LEFT | VPAD_BUTTON_RIGHT))	// unselect/select directory
 			{
 				folderSelect[dirNum] = (pressedBtns & VPAD_BUTTON_RIGHT) ? 1 : 0;
 			}
-
-			if (pressedBtns & (VPAD_BUTTON_PLUS | VPAD_BUTTON_MINUS))
+			else if (pressedBtns & (VPAD_BUTTON_MINUS | VPAD_BUTTON_PLUS))	// unselect/select all directories
 			{
 				setAllFolderSelect((pressedBtns & VPAD_BUTTON_PLUS) ? true : false);
 			}
 
 			// folder selection button pressed ?
-			update_screen = ((pressedBtns & (VPAD_BUTTON_UP | VPAD_BUTTON_DOWN | VPAD_BUTTON_LEFT | VPAD_BUTTON_RIGHT
-											| VPAD_BUTTON_PLUS | VPAD_BUTTON_MINUS)) || yPressed) ? 1 : 0;
+			update_screen |= (pressedBtns & (VPAD_BUTTON_UP | VPAD_BUTTON_DOWN | VPAD_BUTTON_LEFT | VPAD_BUTTON_RIGHT
+											| VPAD_BUTTON_PLUS | VPAD_BUTTON_MINUS | VPAD_BUTTON_Y)) ? 1 : 0;
 		}
 		else
 		{
-			if (pressedBtns & VPAD_BUTTON_B)
+			if (pressedBtns & VPAD_BUTTON_B)	// cancel
 			{
 				doInstall = 0;
 				installSuccess = 0;
@@ -523,14 +541,24 @@ int Menu_Main(void)
 				delay = 0;
 			}
 			else if (--delay <= 0)
-				break;
+			{
+				if (hblChannelLaunch)
+				{
+					__os_snprintf(lastFolder, sizeof(lastFolder), installFolder);
+					SetupInstallTitle();
+					InstallTitle();
+					update_screen = 1;
+					if (doInstall)
+						delay = 250;
+				}
+				else					
+					break;
+			}
 			else
 				update_screen = (delay % 50 == 0) ? 1 : 0;
 		}
-
 		usleep(20000);
     }
-	GetInstallDir(installFolder, sizeof(installFolder));
 
 	MEM1_free(screenBuffer);
 	screenBuffer = NULL;
@@ -543,18 +571,17 @@ int Menu_Main(void)
 
     if(doInstall)
     {
-        installSuccess = 0;
-        installedTitle = 0;
-        installError = 0;
-
         SYSLaunchMenu();
         return EXIT_RELAUNCH_ON_LOAD;
     }
 	
-	setAllFolderSelect(false);
-	dirNum = 0;
-	installFolder[0] = 0;
-
+	if (!doInstall)
+	{
+		setAllFolderSelect(false);
+		dirNum = 0;
+		installFolder[0] = 0;
+	}
+	//log_deinit();
     return EXIT_SUCCESS;
 }
 
